@@ -1206,24 +1206,40 @@ function createBot() {
   addLog(`[Bot] Creating bot instance...`);
   addLog(`[Bot] Connecting to ${config.server.ip}:${config.server.port}`);
 
-  // TCP pre-check: confirm the port is reachable before handing off to mineflayer
+  // TCP pre-check: only connect mineflayer if server port is actually open
   const tcpCheck = new net.Socket();
-  let tcpOk = false;
   tcpCheck.setTimeout(8000);
+
   tcpCheck.connect(config.server.port, config.server.ip, () => {
-    tcpOk = true;
     tcpCheck.destroy();
     addLog(`[Bot] Server port reachable — starting handshake...`);
-  });
-  tcpCheck.on("error", (err) => {
-    addLog(`[Bot] Server port unreachable (${err.code || err.message}) — server may be offline or starting up`);
-    tcpCheck.destroy();
-  });
-  tcpCheck.on("timeout", () => {
-    addLog(`[Bot] Server port check timed out — server may be sleeping`);
-    tcpCheck.destroy();
+    isReconnecting = false;
+    connectMineflayer();
   });
 
+  tcpCheck.on("error", (err) => {
+    tcpCheck.destroy();
+    addLog(`[Bot] Server port unreachable (${err.code || err.message}) — server offline, waiting 3 minutes before retry...`);
+    isReconnecting = false;
+    botState.reconnectAttempts = 0;
+    reconnectTimeoutId = setTimeout(() => {
+      reconnectTimeoutId = null;
+      createBot();
+    }, 180000);
+  });
+
+  tcpCheck.on("timeout", () => {
+    tcpCheck.destroy();
+    addLog(`[Bot] Server port check timed out — waiting 3 minutes before retry...`);
+    isReconnecting = false;
+    botState.reconnectAttempts = 0;
+    reconnectTimeoutId = setTimeout(() => {
+      reconnectTimeoutId = null;
+      createBot();
+    }, 180000);
+  });
+
+  function connectMineflayer() {
   try {
     // FIX: use version:false to auto-detect server version so the bot can join any server.
     // If the user explicitly sets a version in settings.json it is still respected.
@@ -1394,6 +1410,7 @@ function createBot() {
     addLog(`[Bot] Failed to create bot: ${err.message}`);
     scheduleReconnect();
   }
+  } // end connectMineflayer
 }
 
 function scheduleReconnect() {
